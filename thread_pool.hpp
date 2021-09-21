@@ -161,7 +161,7 @@ public:
             block_size = 1;
             num_blocks = (ui32)total_size > 1 ? (ui32)total_size : 1;
         }
-        std::atomic<ui32> blocks_running = 0;
+        std::atomic<ui32> blocks_running = {0};
         for (ui32 t = 0; t < num_blocks; t++)
         {
             T start = ((T)(t * block_size) + the_first_index);
