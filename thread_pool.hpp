@@ -27,6 +27,19 @@
 #include <type_traits> // std::common_type_t, std::decay_t, std::enable_if_t, std::is_void_v, std::invoke_result_t
 #include <utility>     // std::move
 
+// check standard
+#if defined(__clang__) || defined(__GNUC__)
+#define CPP_STANDARD __cplusplus
+#elif defined(__MSC_VER)
+#define CPP_STANDARD _MSVC_LANG
+#endif
+#if CPP_STANDARD >= 201402L
+#define HAS_CPP_14 1
+#endif
+#if CPP_STANDARD >= 201703L
+#define HAS_CPP_17 1
+#endif
+
 // ============================================================================================= //
 //                                    Begin class thread_pool                                    //
 
@@ -75,7 +88,11 @@ public:
      */
     ui64 get_tasks_queued() const
     {
+#ifndef HAS_CPP_17
+        const std::lock_guard<std::mutex> lock(queue_mutex);
+#else
         const std::scoped_lock lock(queue_mutex);
+#endif
         return tasks.size();
     }
 
@@ -173,7 +190,11 @@ public:
     {
         tasks_total++;
         {
+#ifndef HAS_CPP_17
+            const std::lock_guard<std::mutex> lock(queue_mutex);           
+#else
             const std::scoped_lock lock(queue_mutex);
+#endif
             tasks.push(std::function<void()>(task));
         }
     }
@@ -190,7 +211,7 @@ public:
     template <typename F, typename... A>
     void push_task(const F &task, const A &...args)
     {
-        push_task([task, args...]
+        push_task([&task, args...]
                   { task(args...); });
     }
 
@@ -222,7 +243,11 @@ public:
      * @param args The zero or more arguments to pass to the function.
      * @return A future to be used later to check if the function has finished its execution.
      */
+#ifndef HAS_CPP_17
+    template <typename F, typename... A, typename = std::enable_if_t<std::is_void<std::result_of_t<std::decay_t<F>(std::decay_t<A>...)>>::value>>
+#else
     template <typename F, typename... A, typename = std::enable_if_t<std::is_void_v<std::invoke_result_t<std::decay_t<F>, std::decay_t<A>...>>>>
+#endif
     std::future<bool> submit(const F &task, const A &...args)
     {
         std::shared_ptr<std::promise<bool>> task_promise(new std::promise<bool>);
@@ -258,7 +283,11 @@ public:
      * @param args The zero or more arguments to pass to the function.
      * @return A future to be used later to obtain the function's returned value, waiting for it to finish its execution if needed.
      */
+#ifndef HAS_CPP_17
+    template <typename F, typename... A, typename R = std::result_of_t<std::decay_t<F>(std::decay_t<A>...)>, typename = std::enable_if_t<!std::is_void<R>::value>>
+#else
     template <typename F, typename... A, typename R = std::invoke_result_t<std::decay_t<F>, std::decay_t<A>...>, typename = std::enable_if_t<!std::is_void_v<R>>>
+#endif
     std::future<R> submit(const F &task, const A &...args)
     {
         std::shared_ptr<std::promise<R>> task_promise(new std::promise<R>);
@@ -311,7 +340,7 @@ public:
     /**
      * @brief An atomic variable indicating to the workers to pause. When set to true, the workers temporarily stop popping new tasks out of the queue, although any tasks already executed will keep running until they are done. Set to false again to resume popping tasks.
      */
-    std::atomic<bool> paused = false;
+    std::atomic<bool> paused = {false};
 
     /**
      * @brief The duration, in microseconds, that the worker function should sleep for when it cannot find any tasks in the queue. If set to 0, then instead of sleeping, the worker function will execute std::this_thread::yield() if there are no tasks in the queue. The default value is 1000.
@@ -353,7 +382,11 @@ private:
      */
     bool pop_task(std::function<void()> &task)
     {
+#ifndef HAS_CPP_17
+        const std::lock_guard<std::mutex> lock(queue_mutex);
+#else
         const std::scoped_lock lock(queue_mutex);
+#endif
         if (tasks.empty())
             return false;
         else
@@ -408,7 +441,7 @@ private:
     /**
      * @brief An atomic variable indicating to the workers to keep running. When set to false, the workers permanently stop working.
      */
-    std::atomic<bool> running = true;
+    std::atomic<bool> running = {true};
 
     /**
      * @brief A queue of tasks to be executed by the threads.
@@ -428,7 +461,7 @@ private:
     /**
      * @brief An atomic variable to keep track of the total number of unfinished tasks - either still in the queue, or running in a thread.
      */
-    std::atomic<ui32> tasks_total = 0;
+    std::atomic<ui32> tasks_total = {0};
 };
 
 //                                     End class thread_pool                                     //
@@ -460,8 +493,15 @@ public:
     template <typename... T>
     void print(const T &...items)
     {
+#ifndef HAS_CPP_17
+        const std::lock_guard<std::mutex> lock(stream_mutex);
+        // Refs. https://stackoverflow.com/a/66678721/8097964
+        using var = int[];
+        (void)var{0, (out_stream << items, 0)...};
+#else
         const std::scoped_lock lock(stream_mutex);
         (out_stream << ... << items);
+#endif
     }
 
     /**
